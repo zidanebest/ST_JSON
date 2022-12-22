@@ -12,13 +12,15 @@ enum class JsonType {
 };
 
 enum class RetType {
-	PARSE_OK,
+	PARSE_OK=0,
 	PARSE_EXPECT_VALUE,
 	PARSE_INVALID_VALUE,
-	PARSE_ROOT_NOT_SINGULAR
+	PARSE_ROOT_NOT_SINGULAR,
+	PARSE_NUMBER_TOO_BIG
 };
 
 struct JsonValue {
+	double _number;
 	JsonType _type;
 };
 
@@ -29,5 +31,7 @@ struct JsonContext {
 RetType JsonParse(JsonValue* val, const char* json);
 
 JsonType GetType(const JsonValue* val);
+
+double GetNumber(const JsonValue* val);
 
 }
