@@ -82,13 +82,52 @@ static RetType ParseNumber(JsonContext* context, JsonValue* val) {
 	return RetType::PARSE_OK;
 }
 
+
+static const char* ParseHex4(const char* json,unsigned int* u) {
+	*u=0;
+	for(size_t i=0;i<4;++i) {
+		char ch=*json++;
+		*u<<=4;
+		if(ch>='0'&& ch<='9') *u|=ch-'0';
+		else if(ch>='A'&& ch<='F') *u|=ch-'A'+10;
+		else if(ch>='a'&& ch<='f') *u|=ch-'a'+10;
+		else return nullptr;
+	}
+	return json;
+}
+
+static void EncodeUtf8(JsonContext* context,unsigned int u) {
+	if(u<=0x007F) {
+		PUTC(context,u & 0x7F);
+	}
+	else if(u<=0x07FF) {
+		PUTC(context,((u>>6)	& 0x1F)		|0xC0);
+		PUTC(context,(u			& 0x3F)		|0x80);
+	}
+	else if(u<=0xFFFF) {
+		PUTC(context,((u>>12)	& 0x0F)		|0xE0);
+		PUTC(context,((u>>6)	& 0x3F)		|0x80);
+		PUTC(context,(u			& 0x3F)		|0x80);
+	}
+	else {
+		assert(u<=0x10FFFF);
+		PUTC(context,((u>>18)	& 0x07)		|0xF0);
+		PUTC(context,((u>>12)	& 0x3F)		|0x80);
+		PUTC(context,((u>>6)	& 0x3F)		|0x80);
+		PUTC(context,(u			& 0x3F)		|0x80);
+	}
+}
+
+#define STRING_ERROR(ret) do { context->_top = cacheTop; return RetType::ret; } while(0)
+
 static RetType ParseString(JsonContext* context,JsonValue* val) {
 	size_t cacheTop=context->_top;
 	EXPECT(context,'\"');
 	const char* p = context->_json;
+	unsigned int u,u2;
 	for(;;) {
-		char ch = *p;
-		switch(*p++) {
+		char ch = *p++;
+		switch(ch) {
 			case '\"': {
 				size_t size = context->_top-cacheTop;
 				SetString(val, static_cast<const char*>(context->Pop(size)),size);
@@ -98,9 +137,92 @@ static RetType ParseString(JsonContext* context,JsonValue* val) {
 			case '\0':
 				context->_top=cacheTop;
 				return RetType::PARSE_MISSING_QUOTATION_MARK;
+			case '\\':
+				switch(*p++) {
+					case '\\': PUTC(context,'\\');break;
+					case '\"': PUTC(context,'\"');break;
+					case '/': PUTC(context,'/');break;
+					case 'b': PUTC(context,'\b');break;
+					case 'f': PUTC(context,'\f');break;
+					case 'n': PUTC(context,'\n');break;
+					case 'r': PUTC(context,'\r');break;
+					case 't': PUTC(context,'\t');break;
+					case 'u': {
+						if(!(p=ParseHex4(p,&u))) {
+							STRING_ERROR(PARSE_INVALID_UNICODE_HEX);
+						}
+						if(u>=0xD800 && u<= 0xDBFF) {
+							if(*p++ !='\\') {
+								STRING_ERROR(PARSE_INVALID_UNICODE_SURROGATE);
+							}
+							if(*p++!='u') {
+								STRING_ERROR(PARSE_INVALID_UNICODE_SURROGATE);
+							}
+							if(!(p=ParseHex4(p,&u2))) {
+								STRING_ERROR(PARSE_INVALID_UNICODE_HEX);
+							}
+							if(u2< 0xDC00 || u2 > 0xDFFF) {
+								STRING_ERROR(PARSE_INVALID_UNICODE_SURROGATE);
+							}
+							u = (((u - 0xD800) << 10) | (u2 - 0xDC00)) + 0x10000;
+						}
+						EncodeUtf8(context,u);
+						break;
+					}
+					default:
+						context->_top=cacheTop;
+					return RetType::PARSE_INVALID_STRING_ESCAPE;
+				}
+				break;
 			default:
+				if((unsigned char)ch<0x20) {
+					context->_top=cacheTop;
+					return RetType::PARSE_INVALID_STRING_CHAR;
+				}
 				PUTC(context,ch);
 		}
+	}
+}
+
+
+static RetType ParseJsonValue(JsonContext* context, JsonValue* val);
+
+static RetType ParseArray(JsonContext* context, JsonValue* val) {
+	size_t size=0;
+	RetType ret;
+	EXPECT(context,'[');
+	ParseWhitespace(context);
+	if(*context->_json==']') {
+		++context->_json;
+		val->_type=JsonType::JSON_ARRAY;
+		val->_arrData=nullptr;
+		val->_arrSize=0;
+		return RetType::PARSE_OK;
+	}
+	for(;;) {
+		JsonValue v;
+		v.Init();
+		if((ret=ParseJsonValue(context,&v))!=RetType::PARSE_OK){
+			return ret;
+		}
+		memcpy(context->Push(sizeof(JsonValue)),&v,sizeof(JsonValue));
+		++size;
+		ParseWhitespace(context);
+		if(*context->_json==',') {
+			++context->_json;
+			ParseWhitespace(context);
+		}
+		else if(*context->_json==']') {
+			++context->_json;
+			val->_type=JsonType::JSON_ARRAY;
+			val->_arrSize=size;
+			size*=sizeof(JsonValue);
+			val->_arrData=(JsonValue*)malloc(size);
+			memcpy(val->_arrData,context->Pop(size),size);
+			return RetType::PARSE_OK;
+		}
+		else
+			return RetType::PARSE_MISSING_COMMA_OR_SQUARE_BRACKET;
 	}
 }
 
@@ -110,6 +232,7 @@ static RetType ParseJsonValue(JsonContext* context, JsonValue* val) {
 		case 'f': return ParseLiteral(context, val, JsonType::JSON_FALSE,"false");
 		case 't': return ParseLiteral(context, val, JsonType::JSON_TRUE,"true");
 		case '"': return ParseString(context,val);
+		case '[': return ParseArray(context,val);
 		default: return ParseNumber(context, val);
 		case '\0': return RetType::PARSE_EXPECT_VALUE;
 	}
@@ -175,7 +298,7 @@ double ST_JSON::GetNumber(const JsonValue* val) {
 
 bool ST_JSON::GetBoolean(const JsonValue* val) {
 	assert(val&&(val->_type==JsonType::JSON_TRUE||val->_type==JsonType::JSON_FALSE));
-	return val->_boolean;
+	return val->_type==JsonType::JSON_TRUE ? true:false;
 }
 
 const char* ST_JSON::GetString(const JsonValue* val) {
@@ -188,14 +311,25 @@ size_t ST_JSON::GetStringLength(const JsonValue* val) {
 	return val->_strSize;
 }
 
+size_t ST_JSON::GetArraySize(const JsonValue* val) {
+	assert(val&&val->_type==JsonType::JSON_ARRAY);
+	return val->_arrSize;
+}
+
+JsonValue* ST_JSON::GetArrayElement(const JsonValue* val, size_t index) {
+	assert(val&&val->_type==JsonType::JSON_ARRAY&&index<val->_arrSize);
+	return &val->_arrData[index];
+}
+
 void ST_JSON::SetBoolean(JsonValue* val, bool b) {
 	assert(val);
+	val->Free();
 	val->_type = b? JsonType::JSON_TRUE:JsonType::JSON_FALSE;
-	val->_boolean=b;
 }
 
 void ST_JSON::SetNumber(JsonValue* val, double n) {
 	assert(val);
+	val->Free();
 	val->_type=JsonType::JSON_NUMBER;
 	val->_number=n;
 }

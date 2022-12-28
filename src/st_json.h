@@ -21,14 +21,21 @@ enum class RetType {
 	PARSE_INVALID_VALUE,
 	PARSE_ROOT_NOT_SINGULAR,
 	PARSE_NUMBER_TOO_BIG,
-	PARSE_MISSING_QUOTATION_MARK
+	PARSE_MISSING_QUOTATION_MARK,
+	PARSE_INVALID_STRING_ESCAPE,
+	PARSE_INVALID_STRING_CHAR,
+	PARSE_INVALID_UNICODE_SURROGATE,
+	PARSE_INVALID_UNICODE_HEX,
+	PARSE_MISSING_COMMA_OR_SQUARE_BRACKET,
 };
 
 struct JsonValue {
 	union {
-		bool _boolean;
 		double _number;
-		
+		struct {
+			JsonValue* _arrData;
+			size_t _arrSize;
+		};
 		struct {
 			char* _str;
 			size_t _strSize;
@@ -42,6 +49,12 @@ struct JsonValue {
 			case JsonType::JSON_STRING: {
 				free(_str);
 				break;
+			}
+			case JsonType::JSON_ARRAY: {
+				for(size_t i=0;i<_arrSize;++i) {
+					_arrData[i].Free();
+				}
+				free(_arrData);
 			}
 		}
 		_type=JsonType::JSON_NULL;
@@ -77,6 +90,10 @@ bool GetBoolean(const JsonValue* val);
 const char* GetString(const JsonValue* val);
 
 size_t GetStringLength(const JsonValue* val);
+
+size_t GetArraySize(const JsonValue* val);
+
+JsonValue* GetArrayElement(const JsonValue* val,size_t index);
 
 void SetBoolean(JsonValue* val, bool b);
 
