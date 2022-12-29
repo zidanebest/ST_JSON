@@ -25,7 +25,7 @@ using namespace ST_JSON;
 		v.Init(); \
 		ST_EXPECT_EQ_INT(RetType::PARSE_OK, JsonParse(&v,json)); \
 		ST_EXPECT_EQ_INT(JsonType::JSON_STRING, GetType(&v)); \
-		ST_EXPECT_EQ_C_STR((value),GetString(&v),GetStringLength(&v)); \
+		ST_EXPECT_EQ_C_STR((value),GetString(&v),GetStringSize(&v)); \
 		v.Free(); \
 	}while(0)
 
@@ -99,7 +99,6 @@ static void TestParseNumberTooBig() {
 	printf("Test parse number too big \n");
 	TEST_ERROR(PARSE_NUMBER_TOO_BIG, "1e309");
 	TEST_ERROR(PARSE_NUMBER_TOO_BIG, "-1e309");
-
 }
 
 static void TestParseInValidValue() {
@@ -176,11 +175,11 @@ static void TestParseInvalidUnicodeHex() {
 }
 
 static void TestParseInvalidUnicodeSurrogate() {
-	// TEST_ERROR(PARSE_INVALID_UNICODE_SURROGATE, "\"\\uD800\"");
+	TEST_ERROR(PARSE_INVALID_UNICODE_SURROGATE, "\"\\uD800\"");
 	TEST_ERROR(PARSE_INVALID_UNICODE_SURROGATE, "\"\\uDBFF\"");
-	// TEST_ERROR(PARSE_INVALID_UNICODE_SURROGATE, "\"\\uD800\\\\\"");
-	// TEST_ERROR(PARSE_INVALID_UNICODE_SURROGATE, "\"\\uD800\\uDBFF\"");
-	// TEST_ERROR(PARSE_INVALID_UNICODE_SURROGATE, "\"\\uD800\\uE000\"");
+	TEST_ERROR(PARSE_INVALID_UNICODE_SURROGATE, "\"\\uD800\\\\\"");
+	TEST_ERROR(PARSE_INVALID_UNICODE_SURROGATE, "\"\\uD800\\uDBFF\"");
+	TEST_ERROR(PARSE_INVALID_UNICODE_SURROGATE, "\"\\uD800\\uE000\"");
 }
 
 static void TestParseArray() {
@@ -196,7 +195,7 @@ static void TestParseArray() {
 	ST_EXPECT_EQ_INT(JsonType::JSON_NUMBER, GetType(GetArrayElement(&v, 3)));
 	ST_EXPECT_EQ_INT(JsonType::JSON_STRING, GetType(GetArrayElement(&v, 4)));
 	ST_EXPECT_EQ_DOUBLE(123.0, GetNumber(GetArrayElement(&v, 3)));
-	ST_EXPECT_EQ_C_STR("abc", GetString(GetArrayElement(&v, 4)), GetStringLength(GetArrayElement(&v, 4)));
+	ST_EXPECT_EQ_C_STR("abc", GetString(GetArrayElement(&v, 4)), GetStringSize(GetArrayElement(&v, 4)));
 	v.Free();
 
 	v.Init();
@@ -216,6 +215,107 @@ static void TestParseArray() {
 	v.Free();
 }
 
+
+static void TestParseObject() {
+    JsonValue v;
+    size_t i;
+
+    v.Init();
+    ST_EXPECT_EQ_INT(RetType::PARSE_OK, JsonParse(&v, " { } "));
+    ST_EXPECT_EQ_INT(JsonType::JSON_OBJECT, GetType(&v));
+    ST_EXPECT_EQ_SIZE_T(0, GetObjSize(&v));
+    v.Free();
+    
+    v.Init();
+    ST_EXPECT_EQ_INT(RetType::PARSE_OK, JsonParse(&v,
+        " { "
+         "\"n\" : null ,"
+        "\"f\" : false , "
+        "\"t\" : true , "
+        "\"i\" : 123 , "
+        "\"s\" : \"abc\", "
+        "\"a\" : [ 1, 2, 3 ],"
+        "\"o\" : { \"1\" : 1, \"2\" : 2, \"3\" : 3 }"
+        " } "
+    ));
+    ST_EXPECT_EQ_INT(JsonType::JSON_OBJECT, GetType(&v));
+    ST_EXPECT_EQ_SIZE_T(7, GetObjSize(&v));
+	auto key =GetObjKey(&v,0);
+    ST_EXPECT_EQ_C_STR("n", GetObjKey(&v, 0), GetObjKeySize(&v, 0));
+    ST_EXPECT_EQ_INT(JsonType::JSON_NULL,   GetType(GetObjValue(&v, 0)));
+    ST_EXPECT_EQ_C_STR("f", GetObjKey(&v, 1), GetObjKeySize(&v, 1));
+    ST_EXPECT_EQ_INT(JsonType::JSON_FALSE,  GetType(GetObjValue(&v, 1)));
+    ST_EXPECT_EQ_C_STR("t", GetObjKey(&v, 2), GetObjKeySize(&v, 2));
+    ST_EXPECT_EQ_INT(JsonType::JSON_TRUE,   GetType(GetObjValue(&v, 2)));
+    ST_EXPECT_EQ_C_STR("i", GetObjKey(&v, 3), GetObjKeySize(&v, 3));
+    ST_EXPECT_EQ_INT(JsonType::JSON_NUMBER, GetType(GetObjValue(&v, 3)));
+    ST_EXPECT_EQ_DOUBLE(123.0, GetNumber(GetObjValue(&v, 3)));
+    ST_EXPECT_EQ_C_STR("s", GetObjKey(&v, 4), GetObjKeySize(&v, 4));
+    ST_EXPECT_EQ_INT(JsonType::JSON_STRING, GetType(GetObjValue(&v, 4)));
+    ST_EXPECT_EQ_C_STR("abc", GetString(GetObjValue(&v, 4)), GetStringSize(GetObjValue(&v, 4)));
+    ST_EXPECT_EQ_C_STR("a", GetObjKey(&v, 5), GetObjKeySize(&v, 5));
+    ST_EXPECT_EQ_INT(JsonType::JSON_ARRAY, GetType(GetObjValue(&v, 5)));
+    ST_EXPECT_EQ_SIZE_T(3, GetArraySize(GetObjValue(&v, 5)));
+    for (i = 0; i < 3; i++) {
+        JsonValue* e = GetArrayElement(GetObjValue(&v, 5), i);
+        ST_EXPECT_EQ_INT(JsonType::JSON_NUMBER, GetType(e));
+        ST_EXPECT_EQ_DOUBLE(i + 1.0, GetNumber(e));
+    }
+    ST_EXPECT_EQ_C_STR("o", GetObjKey(&v, 6), GetObjKeySize(&v, 6));
+    {
+        JsonValue* o = GetObjValue(&v, 6);
+        ST_EXPECT_EQ_INT(JsonType::JSON_OBJECT, GetType(o));
+        for (i = 0; i < 3; i++) {
+            JsonValue* ov = GetObjValue(o, i);
+            ST_EXPECT_TRUE('1' + i == GetObjKey(o, i)[0]);
+            ST_EXPECT_EQ_SIZE_T(1, GetObjKeySize(o, i));
+            ST_EXPECT_EQ_INT(JsonType::JSON_NUMBER, GetType(ov));
+            ST_EXPECT_EQ_DOUBLE(i + 1.0, GetNumber(ov));
+        }
+    }
+    v.Free();
+}
+
+static void TestStringify() {
+	JsonValue v;
+	JsonValue* temp=nullptr;
+	char* str=nullptr;
+	v.Init();
+	SetBoolean(&v, false);
+	str=JsonStringify(&v,nullptr);
+	free(str);
+
+	SetBoolean(&v, true);
+	str=JsonStringify(&v,nullptr);
+	free(str);
+	
+	SetNumber(&v, 100123);
+	str=JsonStringify(&v,nullptr);
+	free(str);
+
+	SetNumber(&v, 0.125);
+	str=JsonStringify(&v,nullptr);
+	free(str);
+
+	v._type=JsonType::JSON_ARRAY;
+	v._arrData=(JsonValue*)malloc(2*sizeof(JsonValue));
+	v._arrSize=2;
+
+	temp=&v._arrData[0];
+	SetNumber(temp,125);
+
+	temp=&v._arrData[1];
+	SetBoolean(temp, true);
+	
+	str=JsonStringify(&v,nullptr);
+	free(str);
+	
+
+	
+	
+	v.Free();
+}
+
 int main() {
 #ifdef _WINDOWS
 	_CrtSetDbgFlag(_CRTDBG_ALLOC_MEM_DF | _CRTDBG_LEAK_CHECK_DF);
@@ -228,13 +328,14 @@ int main() {
 	TestParseMissingQuotationMark();
 	TestParseInValidValue();
 	TestParseString();
-
 	TestAccessBoolean();
 	TestInvalidStringEscape();
 	TestInvalidStringChar();
 	TestParseInvalidUnicodeHex();
 	TestParseInvalidUnicodeSurrogate();
-	TestParseArray();
+	 TestParseArray();
+	TestParseObject();
+	TestStringify();
 	ST_LOG_STAT();
 
 	return 0;
